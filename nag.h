@@ -71,6 +71,10 @@ typedef u16 NAG_Idx;
 #define NAG_QUEUE_GROW_SIZE (NAG_Idx)4 // at least 8
 
 
+#define NAG_NODE_UNVISITED 0
+#define NAG_NODE_VISITING  1
+#define NAG_NODE_COMPLETED 1
+
 typedef struct nag_graph_node_t NAG_GraphNode;
 struct nag_graph_node_t {
     NAG_Idx id;
@@ -88,17 +92,25 @@ typedef struct {
     NAG_Idx *nodes; // of n_nodes len
 } NAG_Order;
 
+typedef struct {
+    u32 n; // how many orders
+    NAG_Order *orders; // NOTE: Heap allocated!
+} NAG_OrderList;
+
 
 NAG_Graph nag_make_graph(Arena *arena, NAG_Idx n_nodes);
+/* Expects node indices between 0 and graph->n_nodes - 1 */
 void nag_add_edge(NAG_Graph *graph, NAG_Idx from, NAG_Idx to);
 void nag_print(NAG_Graph *graph);
 
-//NAG_Order *nag_dfs(Arena *arena, NAG_Graph *graph);
-NAG_Order nag_dfs_from(Arena *arena, NAG_Graph *graph, NAG_Idx start_node);
-NAG_Order nag_bfs_from(Arena *arena, NAG_Graph *graph, NAG_Idx start_node);
+NAG_OrderList nag_dfs(NAG_Graph *graph);
+NAG_Order nag_dfs_from(NAG_Graph *graph, NAG_Idx start_node);
+
+NAG_OrderList nag_bfs(NAG_Graph *graph);
+NAG_Order nag_bfs_from(NAG_Graph *graph, NAG_Idx start_node);
 
 // bool find_cycles(NAG_Graph *graph);
-// u32 *nag_toposort(NAG_Graph *graph);
+NAG_OrderList nag_rev_toposort(NAG_Graph *graph);
 
 
 

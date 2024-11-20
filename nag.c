@@ -21,6 +21,8 @@
 #include "nag.h"
 
 
+
+
 NAG_Graph nag_make_graph(Arena *arena, NAG_Idx n_nodes)
 {
     NAG_Graph graph = { .arena = arena,
@@ -54,23 +56,20 @@ void nag_print(NAG_Graph *graph)
     }
 }
 
-NAG_Order nag_dfs_from(Arena *arena, NAG_Graph *graph, NAG_Idx start_node)
+static NAG_Order nag_dfs_internal(NAG_Graph *graph, NAG_Idx start_node, u8 *visited)
 {
     NAG_Idx ordered_len = 0;
-    NAG_Idx *ordered = m_arena_alloc(arena, sizeof(NAG_Idx) * graph->n_nodes);
+    NAG_Idx *ordered = m_arena_alloc(graph->arena, sizeof(NAG_Idx) * graph->n_nodes);
 
     /* 
      * Everything from here on and below is dynamic temporary data that will be linearly allocated
      * on the temporary arena and released before returning.
      */
-    ArenaTmp tmp_arena = m_arena_tmp_init(arena);
-    /* NOTE(nic): could be a bitset if we wanted to be fancy */
-    u8 *visited = m_arena_alloc(arena, sizeof(bool) * graph->n_nodes);
-    memset(visited, false, sizeof(NAG_Idx) * graph->n_nodes);
+    ArenaTmp tmp_arena = m_arena_tmp_init(graph->arena);
 
     NAG_Idx stack_size = NAG_STACK_GROW_SIZE;
     NAG_Idx stack_top = 1;
-    NAG_Idx *stack = m_arena_alloc_internal(arena, sizeof(NAG_Idx) * stack_size, 4, false);
+    NAG_Idx *stack = m_arena_alloc_internal(graph->arena, sizeof(NAG_Idx) * stack_size, 4, false);
     stack[0] = start_node;
 
     while (stack_top != 0) {
@@ -84,7 +83,7 @@ NAG_Order nag_dfs_from(Arena *arena, NAG_Graph *graph, NAG_Idx start_node)
             stack[stack_top++] = n->id;
             if (stack_top == stack_size) {
                 /* Linear increases of the allocation for the stack */
-                m_arena_alloc_internal(arena, sizeof(NAG_Idx) * NAG_STACK_GROW_SIZE, 4, false);
+                m_arena_alloc_internal(graph->arena, sizeof(NAG_Idx) * NAG_STACK_GROW_SIZE, 4, false);
                 stack_size += NAG_STACK_GROW_SIZE;
             }
         }
@@ -94,19 +93,45 @@ NAG_Order nag_dfs_from(Arena *arena, NAG_Graph *graph, NAG_Idx start_node)
     return (NAG_Order){ .n_nodes = ordered_len, .nodes = ordered };
 }
 
-NAG_Order nag_bfs_from(Arena *arena, NAG_Graph *graph, NAG_Idx start_node)
+NAG_Order nag_dfs_from(NAG_Graph *graph, NAG_Idx start_node)
+{
+    u8 *visited = m_arena_alloc(graph->arena, sizeof(bool) * graph->n_nodes);
+    memset(visited, false, sizeof(NAG_Idx) * graph->n_nodes);
+    return nag_dfs_internal(graph, start_node, visited);
+}
+
+NAG_OrderList nag_dfs(NAG_Graph *graph)
+{
+    u8 *visited = m_arena_alloc(graph->arena, sizeof(bool) * graph->n_nodes);
+    memset(visited, false, sizeof(NAG_Idx) * graph->n_nodes);
+    NAG_OrderList result = {0};
+    u32 n_orders_allocated = 8;
+    result.orders = malloc(sizeof(NAG_Order) * n_orders_allocated);
+
+    for (NAG_Idx i = 0; i < graph->n_nodes; i++) {
+        if (visited[i]) {
+            continue;
+        }
+        NAG_Order dfs_from_i = nag_dfs_internal(graph, i, visited);
+        result.orders[result.n++] = dfs_from_i;
+        if (result.n == n_orders_allocated) {
+            n_orders_allocated += 8;
+            result.orders = realloc(result.orders, sizeof(NAG_Order) * n_orders_allocated);
+        }
+    }
+    return result;
+}
+
+static NAG_Order nag_bfs_internal(NAG_Graph *graph, NAG_Idx start_node, u8 *visited)
 {
     NAG_Idx ordered_len = 0;
-    NAG_Idx *ordered = m_arena_alloc(arena, sizeof(NAG_Idx) * graph->n_nodes);
+    NAG_Idx *ordered = m_arena_alloc(graph->arena, sizeof(NAG_Idx) * graph->n_nodes);
 
-    ArenaTmp tmp_arena = m_arena_tmp_init(arena);
-    u8 *visited = m_arena_alloc(arena, sizeof(bool) * graph->n_nodes);
-    memset(visited, false, sizeof(NAG_Idx) * graph->n_nodes);
-
+    ArenaTmp tmp_arena = m_arena_tmp_init(graph->arena);
     NAG_Idx queue_size = NAG_QUEUE_GROW_SIZE;
     NAG_Idx queue_low = 0;
     NAG_Idx queue_high = 1;
-    NAG_Idx *queue = m_arena_alloc_internal(arena, sizeof(NAG_Idx) * NAG_QUEUE_GROW_SIZE, 4, false);
+    NAG_Idx *queue = m_arena_alloc_internal(graph->arena, sizeof(NAG_Idx) * NAG_QUEUE_GROW_SIZE, 4, false);
     queue[0] = start_node;
 
     while (queue_low != queue_high) {
@@ -132,11 +157,106 @@ NAG_Order nag_bfs_from(Arena *arena, NAG_Graph *graph, NAG_Idx start_node)
                     queue_low = 0;
                 }
                 /* Increase the allocation */
-                m_arena_alloc_internal(arena, sizeof(NAG_Idx) * NAG_QUEUE_GROW_SIZE, 4, false);
+                m_arena_alloc_internal(graph->arena, sizeof(NAG_Idx) * NAG_QUEUE_GROW_SIZE, 4, false);
                 queue_size += NAG_QUEUE_GROW_SIZE;
             }
         }
     }
     m_arena_tmp_release(tmp_arena);
     return (NAG_Order){ .n_nodes = ordered_len, .nodes = ordered };
+}
+
+NAG_Order nag_bfs_from(NAG_Graph *graph, NAG_Idx start_node)
+{
+    u8 *visited = m_arena_alloc(graph->arena, sizeof(bool) * graph->n_nodes);
+    memset(visited, false, sizeof(NAG_Idx) * graph->n_nodes);
+    return nag_bfs_internal(graph, start_node, visited);
+}
+
+NAG_OrderList nag_bfs(NAG_Graph *graph)
+{
+    u8 *visited = m_arena_alloc(graph->arena, sizeof(bool) * graph->n_nodes);
+    memset(visited, false, sizeof(NAG_Idx) * graph->n_nodes);
+    NAG_OrderList result = {0};
+    u32 n_orders_allocated = 8;
+    result.orders = malloc(sizeof(NAG_Order) * n_orders_allocated);
+
+    for (NAG_Idx i = 0; i < graph->n_nodes; i++) {
+        if (visited[i]) {
+            continue;
+        }
+        NAG_Order dfs_from_i = nag_bfs_internal(graph, i, visited);
+        result.orders[result.n++] = dfs_from_i;
+        if (result.n == n_orders_allocated) {
+            n_orders_allocated += 8;
+            result.orders = realloc(result.orders, sizeof(NAG_Order) * n_orders_allocated);
+        }
+    }
+    return result;
+}
+
+
+static NAG_Order nag_toposort_from_internal(NAG_Graph *graph, NAG_Idx start_node, u8 *visited)
+{
+    NAG_Idx ordered_len = 0;
+    NAG_Idx *ordered = m_arena_alloc(graph->arena, sizeof(NAG_Idx) * graph->n_nodes);
+
+    /* 
+     * Everything from here on and below is dynamic temporary data that will be linearly allocated
+     * on the temporary arena and released before returning.
+     */
+    ArenaTmp tmp_arena = m_arena_tmp_init(graph->arena);
+
+    NAG_Idx stack_size = NAG_STACK_GROW_SIZE;
+    NAG_Idx stack_top = 1;
+    NAG_Idx *stack = m_arena_alloc_internal(graph->arena, sizeof(NAG_Idx) * stack_size, 4, false);
+    stack[0] = start_node;
+
+    while (stack_top != 0) {
+        NAG_Idx current_node = stack[--stack_top];
+        if (visited[current_node] == NAG_NODE_COMPLETED) {
+            ordered[ordered_len++] = current_node;
+            continue;
+        }
+
+        visited[current_node] = NAG_NODE_COMPLETED;
+        stack[stack_top++] = current_node;
+        if (stack_top == stack_size) {
+            m_arena_alloc_internal(graph->arena, sizeof(NAG_Idx) * NAG_STACK_GROW_SIZE, 4, false);
+            stack_size += NAG_STACK_GROW_SIZE;
+        }
+
+        for (NAG_GraphNode *n = graph->neighbor_list[current_node]; n != NULL; n = n->next) {
+            stack[stack_top++] = n->id;
+            if (stack_top == stack_size) {
+                /* Linear increases of the allocation for the stack */
+                m_arena_alloc_internal(graph->arena, sizeof(NAG_Idx) * NAG_STACK_GROW_SIZE, 4, false);
+                stack_size += NAG_STACK_GROW_SIZE;
+            }
+        }
+    }
+    /* NOTE(nic): This only reclaims the memory to the arena, not to the OS */
+    m_arena_tmp_release(tmp_arena);
+    return (NAG_Order){ .n_nodes = ordered_len, .nodes = ordered };
+}
+
+NAG_OrderList nag_rev_toposort(NAG_Graph *graph)
+{
+    u8 *visited = m_arena_alloc(graph->arena, sizeof(bool) * graph->n_nodes);
+    memset(visited, NAG_NODE_UNVISITED, sizeof(NAG_Idx) * graph->n_nodes);
+    NAG_OrderList result = {0};
+    u32 n_orders_allocated = 8;
+    result.orders = malloc(sizeof(NAG_Order) * n_orders_allocated);
+
+    for (NAG_Idx i = 0; i < graph->n_nodes; i++) {
+        if (visited[i] == NAG_NODE_UNVISITED) {
+            NAG_Order dfs_from_i = nag_toposort_from_internal(graph, i, visited);
+            result.orders[result.n++] = dfs_from_i;
+            if (result.n == n_orders_allocated) {
+                n_orders_allocated += 8;
+                result.orders = realloc(result.orders, sizeof(NAG_Order) * n_orders_allocated);
+            }
+        }
+    }
+    return result;
 }
