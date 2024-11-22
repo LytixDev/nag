@@ -68,12 +68,9 @@ typedef double f64;
 typedef u16 NAG_Idx;
 
 #define NAG_STACK_GROW_SIZE (NAG_Idx)256 // at least 8
-#define NAG_QUEUE_GROW_SIZE (NAG_Idx)4 // at least 8
-
-
-#define NAG_NODE_UNVISITED 0
-#define NAG_NODE_VISITING  1
-#define NAG_NODE_COMPLETED 1
+#define NAG_QUEUE_GROW_SIZE (NAG_Idx)32 // at least 8
+                                        //
+#define NAG_MIN(a, b) ((a) < (b) ? (a) : (b))
 
 typedef struct nag_graph_node_t NAG_GraphNode;
 struct nag_graph_node_t {
@@ -84,7 +81,8 @@ struct nag_graph_node_t {
 typedef struct {
     NAG_Idx n_nodes;
     NAG_GraphNode **neighbor_list;
-    Arena *arena;
+    Arena *scratch_arena;
+    Arena *persist_arena;
 } NAG_Graph;
 
 typedef struct {
@@ -98,7 +96,7 @@ typedef struct {
 } NAG_OrderList;
 
 
-NAG_Graph nag_make_graph(Arena *arena, NAG_Idx n_nodes);
+NAG_Graph nag_make_graph(Arena *persist, Arena *scratch, NAG_Idx n_nodes);
 /* Expects node indices between 0 and graph->n_nodes - 1 */
 void nag_add_edge(NAG_Graph *graph, NAG_Idx from, NAG_Idx to);
 void nag_print(NAG_Graph *graph);
@@ -109,8 +107,10 @@ NAG_Order nag_dfs_from(NAG_Graph *graph, NAG_Idx start_node);
 NAG_OrderList nag_bfs(NAG_Graph *graph);
 NAG_Order nag_bfs_from(NAG_Graph *graph, NAG_Idx start_node);
 
-// bool find_cycles(NAG_Graph *graph);
+/* Assumes graph contains no cycles */
 NAG_OrderList nag_rev_toposort(NAG_Graph *graph);
+
+NAG_OrderList nag_scc(NAG_Graph *graph);
 
 
 

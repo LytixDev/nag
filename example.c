@@ -30,11 +30,12 @@ void nag_order_print(NAG_Order order)
 
 void simple_dfs_bfs()
 {
-    Arena arena;
-    m_arena_init_dynamic(&arena, 1, 4096);
+    Arena persist, scratch;
+    m_arena_init_dynamic(&persist, 2, 4096);
+    m_arena_init_dynamic(&scratch, 2, 4096);
 
     u32 n_nodes = 9;
-    NAG_Graph graph = nag_make_graph(&arena, n_nodes);
+    NAG_Graph graph = nag_make_graph(&persist, &scratch, n_nodes);
 
     nag_add_edge(&graph, 0, 1);
     nag_add_edge(&graph, 0, 4);
@@ -45,7 +46,7 @@ void simple_dfs_bfs()
     nag_add_edge(&graph, 4, 8);
     nag_add_edge(&graph, 6, 7);
 
-    nag_print(&graph);
+    //nag_print(&graph);
 
     NAG_Order dfs_order = nag_dfs_from(&graph, 0);
     printf("--- dfs ---\n");
@@ -55,16 +56,18 @@ void simple_dfs_bfs()
     printf("--- bfs ---\n");
     nag_order_print(bfs_order);
 
-    m_arena_release(&arena);
+    m_arena_release(&persist);
+    m_arena_release(&scratch);
 }
 
-void disconnect()
+void toposort()
 {
-    Arena arena;
-    m_arena_init_dynamic(&arena, 1, 4096);
+    Arena persist, scratch;
+    m_arena_init_dynamic(&persist, 2, 4096);
+    m_arena_init_dynamic(&scratch, 2, 4096);
 
     u32 n_nodes = 9;
-    NAG_Graph graph = nag_make_graph(&arena, n_nodes);
+    NAG_Graph graph = nag_make_graph(&persist, &scratch, n_nodes);
 
     nag_add_edge(&graph, 0, 1);
     nag_add_edge(&graph, 0, 2);
@@ -100,15 +103,48 @@ void disconnect()
     }
     free(r.orders);
 
-    m_arena_release(&arena);
+    m_arena_release(&persist);
+    m_arena_release(&scratch);
 }
 
+void scc()
+{
+    Arena persist, scratch;
+    m_arena_init_dynamic(&persist, 2, 4096);
+    m_arena_init_dynamic(&scratch, 2, 4096);
+
+    u32 n_nodes = 6;
+    NAG_Graph graph = nag_make_graph(&persist, &scratch, n_nodes);
+
+    nag_add_edge(&graph, 1, 4);
+    nag_add_edge(&graph, 4, 5);
+    nag_add_edge(&graph, 5, 4);
+
+    nag_add_edge(&graph, 0, 1);
+    nag_add_edge(&graph, 1, 2);
+    nag_add_edge(&graph, 2, 3);
+    nag_add_edge(&graph, 3, 1);
+
+
+    NAG_OrderList r = nag_scc(&graph);
+    printf("--- scc ---\n");
+    for (u32 i = 0; i < r.n; i++) {
+        printf("[%d]: ", i);
+        nag_order_print(r.orders[i]);
+    }
+    free(r.orders);
+    m_arena_release(&persist);
+    m_arena_release(&scratch);
+}
 
 int main(void)
 {
-    printf("[Example 1]:\n");
+    printf("[Example 1]: dfs & bfs\n");
     simple_dfs_bfs();
 
-    printf("Example 2:\n");
-    disconnect();
+    printf("[Example 2]: reversed toposort\n");
+    toposort();
+
+    printf("[Example 3] scc:\n");
+    scc();
 }
