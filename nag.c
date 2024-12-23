@@ -273,119 +273,84 @@ static inline bool node_on_stack(NAG_Idx *stack, u32 stack_top, NAG_Idx node)
     return false;
 }
 
-static NAG_OrderList nag_scc_from(NAG_Graph *graph, NAG_Idx start_node, NAG_Idx *visited)
-{
-    NAG_OrderList sccs = {0};
-    u32 sccs_allocated = 8;
-    sccs.orders = malloc(sizeof(NAG_Order) * sccs_allocated);
+typedef struct {
+    NAG_Idx *stack;
+    bool *on_stack;
+    NAG_Idx *low_link;
+    NAG_Idx *discovery_time;
+    NAG_Idx time;
+    NAG_Idx stack_top;
+    Arena *scratch_arena;
+} NAG_TarjanContext;
 
-    /* This will grow linearly on the persist arena as we add nodes to the order */
-    NAG_Idx *ordered = m_arena_alloc(graph->persist_arena, sizeof(NAG_Idx) * 1);
-    NAG_Idx ordered_len = 0;
+static void nag_tarjan_scc_dfs(NAG_Graph *graph, NAG_Idx node, NAG_TarjanContext *ctx, NAG_OrderList *sccs) {
+    ctx->discovery_time[node] = ctx->time;
+    ctx->low_link[node] = ctx->time;
+    ctx->time++;
+    ctx->stack[ctx->stack_top++] = node;
+    ctx->on_stack[node] = true;
 
-    ArenaTmp tmp_arena = m_arena_tmp_init(graph->scratch_arena);
-    NAG_Idx *low_link = m_arena_alloc(graph->scratch_arena, sizeof(NAG_Idx) * graph->n_nodes);
-    /* Default the low_link to be graph->n_nodes which is higher that it will be after processing */
-    memset(low_link, graph->n_nodes, sizeof(NAG_Idx) * graph->n_nodes);
-
-    NAG_Idx stack_size = NAG_STACK_GROW_SIZE;
-    NAG_Idx stack_top = 1;
-    /* Similar to ordered. Will grow linearly on the scratch arena as we add nodes to the stack */
-    NAG_Idx *stack = m_arena_alloc_internal(graph->scratch_arena, sizeof(NAG_Idx) * stack_size, sizeof(NAG_Idx), false);
-    stack[0] = start_node;
-    NAG_Idx previous_node;
-
-    while (stack_top != 0) {
-        NAG_Idx current_node = stack[--stack_top];
-        if (visited[current_node]) {
-            /* Only a SCC with itself, which we don't care about */
-            if (stack_top == 0) {
-                break;
-            }
-
-            bool previous_on_stack = node_on_stack(stack, stack_top - 1, previous_node);
-            if (previous_on_stack) {
-                NAG_Idx node_that_started = current_node;
-                /* 
-                 * We're currently exploring a node. If the previous node we explored is on the
-                 * stack, there has to be a path from this node to the previous node. And since
-                 * the previous node, well, is the previous, there has to be a path from the 
-                 * previous node to this node. In other words we have a cycle. We must now
-                 * backtrack the steps until we find the current node again to which will find 
-                 * how many nodes are a part of this cycle.
-                 */
-                while (stack_top > 0 && previous_node != node_that_started) {
-                    low_link[previous_node] = NAG_MIN(low_link[current_node], low_link[previous_node]);
-                    current_node = previous_node;
-                    previous_node = stack[--stack_top];
-                    ordered[ordered_len++] = previous_node;
-                    if (!linear_alloc_nodes(graph->persist_arena, 1)) {
-                        /* Persist arena is full. Report error. */
-                    }
-                }
-
-                NAG_Order scc = { .n_nodes = ordered_len, .nodes = ordered };
-                sccs.orders[sccs.n++] = scc;
-                if (sccs.n == sccs_allocated) {
-                    sccs_allocated += 8;
-                    sccs.orders = realloc(sccs.orders, sizeof(NAG_Order) * sccs_allocated);
-                }
-
-                /* Restart the order */
-                ordered_len = 0;
-                ordered = m_arena_alloc(graph->persist_arena, sizeof(NAG_Idx) * 1);
-            }
-            previous_node = current_node;
-            continue;
+    for (NAG_GraphNode *neighbor = graph->neighbor_list[node]; neighbor != NULL; neighbor = neighbor->next) {
+        NAG_Idx neighbor_id = neighbor->id;
+        if (ctx->discovery_time[neighbor_id] == NAG_UNDISCOVERED) {
+            /* If neighbor is not yet visited, recurse on it */
+            nag_tarjan_scc_dfs(graph, neighbor_id, ctx, sccs);
+            ctx->low_link[node] = NAG_MIN(ctx->low_link[node], ctx->low_link[neighbor_id]);
+        } else if (ctx->on_stack[neighbor_id]) {
+            /* Update low-link value if the neighbor is on the stack */
+            ctx->low_link[node] = NAG_MIN(ctx->low_link[node], ctx->discovery_time[neighbor_id]);
         }
-
-        visited[current_node] = true;
-        low_link[current_node] = current_node;
-        stack[stack_top++] = current_node; /* Next time we pop this node all neighbours have been visited */
-        if (stack_top == stack_size) {
-            if (!linear_alloc_nodes(graph->scratch_arena, NAG_STACK_GROW_SIZE)) {
-                /* Scratch arena is full. Report error. */
-            }
-            stack_size += NAG_STACK_GROW_SIZE;
-        }
-
-        for (NAG_GraphNode *n = graph->neighbor_list[current_node]; n != NULL; n = n->next) {
-            stack[stack_top++] = n->id;
-            if (stack_top == stack_size) {
-                if (!linear_alloc_nodes(graph->scratch_arena, NAG_STACK_GROW_SIZE)) {
-                    /* Scratch arena is full. Report error. */
-                }
-                stack_size += NAG_STACK_GROW_SIZE;
-            }
-        }
-        previous_node = current_node;
     }
 
-    m_arena_tmp_release(tmp_arena);
-    return sccs;
+    /* If node is a root node, pop the stack and form an SCC */
+    if (ctx->low_link[node] == ctx->discovery_time[node]) {
+        NAG_Order scc = {0};
+        /* This will grow linearly on the persist arena as we add nodes to the order */
+        scc.nodes = m_arena_alloc(graph->persist_arena, sizeof(NAG_Idx) * 1);
+
+        while (1) {
+            NAG_Idx top = ctx->stack[--ctx->stack_top];
+            ctx->on_stack[top] = false;
+            scc.nodes[scc.n_nodes++] = top;
+            if (!linear_alloc_nodes(graph->persist_arena, 1)) {
+                /* Persist arena is full. Report error. */
+            }
+            if (top == node) break;
+        }
+
+        /* This implemention does not care about trivial scc's */
+        if (scc.n_nodes != 1) {
+            if (sccs->n == 0 || sccs->n % 8 == 0) { // TODO: this is hacky
+                sccs->orders = realloc(sccs->orders, sizeof(NAG_Order) * (sccs->n + 8));
+            }
+            sccs->orders[sccs->n++] = scc;
+        }
+    }
 }
 
-NAG_OrderList nag_scc(NAG_Graph *graph)
-{
-    NAG_Idx *visited = m_arena_alloc(graph->scratch_arena, sizeof(NAG_Idx) * graph->n_nodes);
-    memset(visited, false, sizeof(NAG_Idx) * graph->n_nodes);
+NAG_OrderList nag_scc(NAG_Graph *graph) {
+    NAG_OrderList sccs;
+    sccs.n = 0;
+    sccs.orders = malloc(sizeof(NAG_Order) * sccs.n);
 
-    NAG_OrderList result = {0};
-    u32 n_orders_allocated = 8;
-    result.orders = malloc(sizeof(NAG_Order) * n_orders_allocated);
+    NAG_TarjanContext ctx;
+    ctx.stack = m_arena_alloc(graph->scratch_arena, sizeof(NAG_Idx) * graph->n_nodes);
+    ctx.on_stack = m_arena_alloc(graph->scratch_arena, sizeof(bool) * graph->n_nodes);
+    ctx.low_link = m_arena_alloc(graph->scratch_arena, sizeof(NAG_Idx) * graph->n_nodes);
+    ctx.discovery_time = m_arena_alloc(graph->scratch_arena, sizeof(NAG_Idx) * graph->n_nodes);
+    ctx.time = 0;
+    ctx.stack_top = 0;
+    ctx.scratch_arena = graph->scratch_arena;
+
+    memset(ctx.on_stack, false, sizeof(bool) * graph->n_nodes);
+    memset(ctx.discovery_time, NAG_UNDISCOVERED, sizeof(NAG_Idx) * graph->n_nodes);
 
     for (NAG_Idx i = 0; i < graph->n_nodes; i++) {
-        if (visited[i] == 0) {
-            NAG_OrderList sccs = nag_scc_from(graph, i, visited);
-            for (u32 j = 0; j < sccs.n; j++) {
-                result.orders[result.n++] = sccs.orders[j];
-                if (result.n == n_orders_allocated) {
-                    n_orders_allocated += 8;
-                    result.orders = realloc(result.orders, sizeof(NAG_Order) * n_orders_allocated);
-                }
-            }
-            free(sccs.orders);
+        if (ctx.discovery_time[i] == NAG_UNDISCOVERED) {
+            nag_tarjan_scc_dfs(graph, i, &ctx, &sccs);
         }
     }
-    return result;
+
+    m_arena_clear(graph->scratch_arena);
+    return sccs;
 }

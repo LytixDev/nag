@@ -72,6 +72,8 @@ typedef u16 NAG_Idx;
                                         //
 #define NAG_MIN(a, b) ((a) < (b) ? (a) : (b))
 
+#define NAG_UNDISCOVERED U16_MAX
+
 typedef struct nag_graph_node_t NAG_GraphNode;
 struct nag_graph_node_t {
     NAG_Idx id;

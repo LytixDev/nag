@@ -137,6 +137,30 @@ void scc()
     m_arena_release(&scratch);
 }
 
+void scc2()
+{
+    Arena persist, scratch;
+    m_arena_init_dynamic(&persist, 2, 4096);
+    m_arena_init_dynamic(&scratch, 2, 4096);
+
+    u32 n_nodes = 3;
+    NAG_Graph graph = nag_make_graph(&persist, &scratch, n_nodes);
+
+    nag_add_edge(&graph, 0, 1);
+    nag_add_edge(&graph, 0, 2);
+    nag_add_edge(&graph, 1, 2);
+
+    NAG_OrderList r = nag_scc(&graph);
+    printf("--- scc ---\n");
+    for (u32 i = 0; i < r.n; i++) {
+        printf("[%d]: ", i);
+        nag_order_print(r.orders[i]);
+    }
+    free(r.orders);
+    m_arena_release(&persist);
+    m_arena_release(&scratch);
+}
+
 int main(void)
 {
     printf("[Example 1]: dfs & bfs\n");
@@ -147,4 +171,7 @@ int main(void)
 
     printf("[Example 3] scc:\n");
     scc();
+
+    printf("[Example 4] scc 2:\n");
+    scc2();
 }
